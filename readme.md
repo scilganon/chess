@@ -1,0 +1,1 @@
+icons from http://www.enpassant.dk/chess/downl/chesicon.zip
