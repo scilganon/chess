@@ -11,7 +11,10 @@ const cfg = {
 const TYPE_ENUM = {
     KING: 'king',
     QUEEN: 'queen',
-    PAWN: 'pawn'
+    PAWN: 'pawn',
+    BISHOP: 'bishop',
+    KNIGHT: 'knight',
+    ROCK: 'rock'
 };
 
 function* TURN_ENUM(){
@@ -57,8 +60,11 @@ function decorateCellSize(cell, size){
 function createTable(cfg){
     const decorators = cfg.decorators;
     const size = 8;
-    var table = document.createElement('table');
 
+    /**
+     * @type {HTMLTableElement}
+     */
+    var table = document.createElement('table');
 
     for(var i=0;i<size;i++){
         var row = table.insertRow(i);
@@ -84,7 +90,7 @@ function Piece(name, color, x, y){
 
 /**
  * @param {HTMLTableElement} table
- * @param {Piece[]} list
+ * @param {PieceCollection} list
  * @constructor
  */
 function Presenter(table, list){
@@ -94,14 +100,17 @@ function Presenter(table, list){
 
 /**
  *
- * @param {Piece[]} list
+ * @param {PieceCollection} list
  */
 Presenter.prototype.initMap = function(list){
     this.map = new Map();
+    var aliases  = {
+        [TYPE_ENUM.KNIGHT]: 'N'
+    };
 
     list.forEach((p) => {
         let img = document.createElement('img');
-        img.src = cfg.theme.ico_path(p.name, p.color);
+        img.src = cfg.theme.ico_path(aliases[p.name] || p.name, p.color);
 
         this.map.set(img, p);
     });
@@ -181,8 +190,14 @@ State.prototype.reset = function(){
     this.wasSelected = false;
 };
 
-function RuleValidator(state){
+/**
+ * @param {State} state
+ * @param {PieceCollection} list
+ * @constructor
+ */
+function RuleValidator(state, list){
     this.state = state;
+    this.list = list;
 
     this.mapMove = new Map([
         [TYPE_ENUM.KING, this.kingValidation],
@@ -190,25 +205,53 @@ function RuleValidator(state){
     ]);
 
     this.mapAttack = new Map([
-        [TYPE_ENUM.KING, this.kingValidation],
-        [TYPE_ENUM.QUEEN, this.queenValidation]
+        [TYPE_ENUM.KING, () => true],
+        [TYPE_ENUM.QUEEN, () => true]
     ]);
 }
 
 RuleValidator.prototype.queenValidation = function(prev, current){
+    var dX = Math.abs(Math.abs(prev.x) - Math.abs(current.x));
+    var dY = Math.abs(Math.abs(prev.y) - Math.abs(current.y));
+
     switch(true){
         case prev.y === current.y:
-            console.log('q:v');
-            return true;
-        case prev.x === current.x:
-            console.log('q:x');
-            return true;
-        default:
-            var dX = Math.abs(Math.abs(prev.x) - Math.abs(current.x));
-            var dY = Math.abs(Math.abs(prev.y) - Math.abs(current.y));
+            for(let i= 1; i<dX-1; i++){
+                let point = {
+                    y: prev.y,
+                    x: current.x - i * (prev.x > current.x ? -1 : 1)
+                };
+                if(!this.list.isAvailableDest(point)){
+                    return false;
+                }
+            }
 
-            return dX === dY;
+            break;
+        case prev.x === current.x:
+            for(let i= 1; i<dY-1; i++){
+                let point = {
+                    x: prev.x,
+                    y: current.y - i * (prev.y > current.y ? -1 : 1)
+                };
+                if(!this.list.isAvailableDest(point)){
+                    return false;
+                }
+            }
+
+            break;
+        default:
+            for(let i= 1; i<dX; i++){
+                let point = {
+                    x: current.x - i * (prev.x > current.x ? -1 : 1),
+                    y: current.y - i * (prev.y > current.y ? -1 : 1)
+                };
+                if(!this.list.isAvailableDest(point)){
+                    return false;
+                }
+            }
     }
+
+    return true;
 };
 
 RuleValidator.prototype.kingValidation = function (prev, current){
@@ -224,7 +267,7 @@ RuleValidator.prototype.kingValidation = function (prev, current){
  * @param {{}} dest
  */
 RuleValidator.prototype.checkMove = function(piece, dest){
-    return (this.mapMove.get(piece.name) || _.noop)(_.pick(piece, ['x', 'y']), dest);
+    return (this.mapMove.get(piece.name) || _.noop).call(this, _.pick(piece, ['x', 'y']), dest);
 };
 
 /**
@@ -233,7 +276,7 @@ RuleValidator.prototype.checkMove = function(piece, dest){
  * @param {{}} dest
  */
 RuleValidator.prototype.canAttack = function(piece, dest){
-    return (this.mapAttack.get(piece.name) || _.noop)(_.pick(piece, ['x', 'y']), dest);
+    return (this.mapAttack.get(piece.name) || _.noop).call(this, _.pick(piece, ['x', 'y']), dest);
 };
 
 /**
@@ -279,9 +322,9 @@ function TurnManager(state, presenter, validator){
 
     state.subscribe(() => {
         var cPiece = this.presenter.getPieceByImg(this.state.selected);
-        var sPiece = this.presenter.getPieceByImg(this.state.wasSelected);
+        var wPiece = this.presenter.getPieceByImg(this.state.wasSelected);
 
-        if(sPiece && (this.state.turn !== sPiece.color)){
+        if(wPiece && (this.state.turn !== wPiece.color)){
             this.presenter.resetHighLight();
             throw new Error('not your turn');
         }
@@ -294,15 +337,15 @@ function TurnManager(state, presenter, validator){
 
         if(this.state.wasSelected){
             if(!this.state.selected){
-                if(sPiece && this.validator.checkMove(sPiece, this.state.dest)){
-                    this.actions.move(sPiece);
+                if(wPiece && this.validator.checkMove(wPiece, this.state.dest)){
+                    this.actions.move(wPiece);
                     this.switchTurn();
                 }
             } else {
-                if(sPiece && this.validator.checkMove(sPiece, this.state.dest)){
-                    if(this.validator.canAttack(cPiece, this.state.dest)){
-                        if(cPiece.color !== sPiece.color){
-                            this.actions.kill(sPiece, cPiece);
+                if(wPiece && this.validator.checkMove(wPiece, this.state.dest)){
+                    if(this.validator.canAttack(wPiece, this.state.dest)){
+                        if(cPiece.color !== wPiece.color){
+                            this.actions.kill(wPiece, cPiece);
                             this.switchTurn();
                         }
                     }
@@ -336,6 +379,25 @@ ActionManager.prototype.kill = function(killer, target){
     this.state.reset();
 };
 
+function PieceCollection(list){
+    this.list = list;
+
+    this.forEach = this.list.forEach.bind(this.list);
+}
+
+/**
+ * @param {{}} dest
+ * @returns {Boolean}
+ */
+PieceCollection.prototype.isAvailableDest = function(dest){
+    return !this.list.reduce((result, piece) => {
+        return result || _.isEqual(dest, {
+            x: piece.x,
+            y: piece.y
+        });
+    }, false);
+};
+
 //prepare
 var table = createTable({
     decorators: [
@@ -347,12 +409,14 @@ var table = createTable({
 document.body.appendChild(table);
 
 //run
-var list = [
-    new Piece(TYPE_ENUM.KING, TURN_ENUM.WHITE, 0, 0),
-    new Piece(TYPE_ENUM.QUEEN, TURN_ENUM.WHITE, 1, 0),
+var list = new PieceCollection([
+    new Piece(TYPE_ENUM.KING, TURN_ENUM.WHITE, 1, 0),
+    new Piece(TYPE_ENUM.QUEEN, TURN_ENUM.WHITE, 0, 0),
+    //new Piece(TYPE_ENUM.ROCK, TURN_ENUM.WHITE, 0, 1),
     new Piece(TYPE_ENUM.QUEEN, TURN_ENUM.BLACK, 5, 7),
-    new Piece(TYPE_ENUM.KING, TURN_ENUM.BLACK, 7, 7)
-];
+    new Piece(TYPE_ENUM.KING, TURN_ENUM.BLACK, 7, 7),
+    new Piece(TYPE_ENUM.BISHOP, TURN_ENUM.BLACK, 5, 5)
+]);
 
 
 var state = new State();
@@ -360,5 +424,5 @@ var presenter = new Presenter(table, list);
 presenter.render();
 
 var ctrl = new InputController(table, state);
-var validator = new RuleValidator(state);
+var validator = new RuleValidator(state, list);
 var manager = new TurnManager(state, presenter, validator);
