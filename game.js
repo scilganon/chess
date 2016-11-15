@@ -83,9 +83,29 @@ function createTable(cfg){
 function Piece(name, color, x, y){
     this.color = color;
     this.name = name;
-    this.x = x || 0;
-    this.y = y || 0;
-    this.isRemoved = false;
+
+    this.loc = {
+        x: x || 0,
+        y: y || 0
+    };
+
+    Object.defineProperty(this, 'x', {
+        get(){
+            return this.loc.x;
+        }
+    });
+
+    Object.defineProperty(this, 'y', {
+        get(){
+            return this.loc.y;
+        }
+    });
+
+    Object.defineProperty(this, 'isRemoved', {
+        get(){
+            return !this.loc;
+        }
+    });
 }
 
 /**
@@ -144,9 +164,12 @@ Presenter.prototype.highlight = function(img){
  * @param {HTMLImageElement} img
  */
 Presenter.prototype.renderPiece = function(piece, img){
-    if(piece.isRemoved && img.parentNode){
-        img.style.display = 'none';
-        img.parentNode.removeChild(img);
+    if(piece.isRemoved){
+        if(img.parentNode){
+            img.style.display = 'none';
+            img.parentNode.removeChild(img);
+        }
+
         return;
     }
 
@@ -167,11 +190,25 @@ Presenter.prototype.getPieceByImg = function(img){
     return this.map.get(img);
 };
 
-function State(){
+function State(cfg){
+    cfg = _.merge({
+        firstTurn: TURN_ENUM.WHITE
+    }, cfg);
+
     this.selected = false;
-    this.turn = TURN_ENUM.WHITE;
+    this.turn = cfg.firstTurn;
     this.dest = false;
+
+    this.used = new Set();
 }
+
+State.prototype.wasUsed = function(piece){
+    return this.used.has(piece);
+};
+
+State.prototype.mark = function(piece){
+    piece instanceof Piece && this.used.add(piece);
+};
 
 State.prototype.update = function(data){
     this.wasSelected = this.selected;
@@ -203,7 +240,8 @@ function RuleValidator(state, list){
         [TYPE_ENUM.KING, this.kingValidation],
         [TYPE_ENUM.QUEEN, this.queenValidation],
         [TYPE_ENUM.BISHOP, this.bishopValidation],
-        [TYPE_ENUM.ROCK, this.rockValidation]
+        [TYPE_ENUM.ROCK, this.rockValidation],
+        [TYPE_ENUM.PAWN, this.pawnValidation]
     ]);
 
     this.mapAttack = new Map([
@@ -221,7 +259,13 @@ RuleValidator.prototype.getDeltaPath = function(prev, current){
     };
 };
 
-RuleValidator.prototype.queenValidation = function(prev, current){
+/**
+ * @param {Piece} piece
+ * @param current
+ * @returns {boolean}
+ */
+RuleValidator.prototype.queenValidation = function(piece, current){
+    const prev = piece.loc;
     const delta = this.getDeltaPath(prev, current);
 
     var result = false;
@@ -240,14 +284,26 @@ RuleValidator.prototype.queenValidation = function(prev, current){
     return result;
 };
 
-RuleValidator.prototype.bishopValidation = function(prev, current){
+/**
+ * @param {Piece} piece
+ * @param current
+ * @returns {boolean}
+ */
+RuleValidator.prototype.bishopValidation = function(piece, current){
+    const prev = piece.loc;
     const delta = this.getDeltaPath(prev, current);
     const directionMod = (prev.x > current.x ? -1 : 1);
 
     return delta.x === delta.y && this.diagonalValidation(delta.x, current, directionMod);
 };
 
-RuleValidator.prototype.rockValidation = function(prev, current){
+/**
+ * @param {Piece} piece
+ * @param current
+ * @returns {boolean}
+ */
+RuleValidator.prototype.rockValidation = function(piece, current){
+    const prev = piece.loc;
     const delta = this.getDeltaPath(prev, current);
 
     var result = false;
@@ -264,11 +320,33 @@ RuleValidator.prototype.rockValidation = function(prev, current){
     return result;
 };
 
-RuleValidator.prototype.kingValidation = function (prev, current){
+/**
+ * @param {Piece} piece
+ * @param current
+ * @returns {boolean}
+ */
+RuleValidator.prototype.kingValidation = function (piece, current){
+    const prev = piece.loc;
     var isValidX = Math.abs(Math.abs(prev.x) - Math.abs(current.x)) <2;
     var isValidY = Math.abs(Math.abs(prev.y) - Math.abs(current.y)) <2;
 
     return isValidX && isValidY;
+};
+
+RuleValidator.prototype.pawnValidation = function(piece, current){
+    const delta = this.getDeltaPath(piece.loc, current);
+
+    const isSameX = piece.loc.x === current.x;
+    const isValidY = [
+            1,
+            1 + !this.state.wasUsed(piece) // 1 or 2
+        ].find((val) => val === delta.y);
+    const isRightDirection = {
+        [TURN_ENUM.BLACK]: () => piece.loc.y > current.y,
+        [TURN_ENUM.WHITE]: () => piece.loc.y < current.y
+    }[piece.color]();
+
+    return this.list.isAvailableDest(current) && isRightDirection && isSameX && isValidY;
 };
 
 RuleValidator.prototype.horizontalValidation = function(dX, current, mod){
@@ -319,7 +397,7 @@ RuleValidator.prototype.diagonalValidation = function(delta, current, mod){
  * @param {{}} dest
  */
 RuleValidator.prototype.checkMove = function(piece, dest){
-    return (this.mapMove.get(piece.name) || _.noop).call(this, _.pick(piece, ['x', 'y']), dest);
+    return (this.mapMove.get(piece.name) || _.noop).call(this, piece, dest);
 };
 
 /**
@@ -328,7 +406,7 @@ RuleValidator.prototype.checkMove = function(piece, dest){
  * @param {{}} dest
  */
 RuleValidator.prototype.canAttack = function(piece, dest){
-    return (this.mapAttack.get(piece.name) || _.noop).call(this, _.pick(piece, ['x', 'y']), dest);
+    return (this.mapAttack.get(piece.name) || _.noop).call(this, piece, dest);
 };
 
 /**
@@ -387,18 +465,20 @@ function TurnManager(state, presenter, validator){
             this.presenter.resetHighLight();
         }
 
-        if(this.state.wasSelected){
-            if(!this.state.selected){
-                if(wPiece && this.validator.checkMove(wPiece, this.state.dest)){
+        if(wPiece){
+            if(!cPiece){
+                if(this.validator.checkMove(wPiece, this.state.dest)){
                     this.actions.move(wPiece);
                     this.switchTurn();
+                    this.state.mark(wPiece);
                 }
             } else {
-                if(wPiece && this.validator.checkMove(wPiece, this.state.dest)){
+                if(this.validator.checkMove(wPiece, this.state.dest)){
                     if(this.validator.canAttack(wPiece, this.state.dest)){
                         if(cPiece.color !== wPiece.color){
                             this.actions.kill(wPiece, cPiece);
                             this.switchTurn();
+                            this.state.mark(wPiece);
                         }
                     }
                 }
@@ -418,7 +498,7 @@ function ActionManager(state){
 }
 
 ActionManager.prototype.move = function(piece){
-    _.mergeWith(piece, this.state.dest);
+    _.mergeWith(piece.loc, this.state.dest);
 };
 
 /**
@@ -426,8 +506,8 @@ ActionManager.prototype.move = function(piece){
  * @param {Piece} target
  */
 ActionManager.prototype.kill = function(killer, target){
-    _.mergeWith(killer, this.state.dest);
-    target.isRemoved = true;
+    _.mergeWith(killer.loc, this.state.dest);
+    delete target.loc;
     this.state.reset();
 };
 
@@ -442,12 +522,14 @@ function PieceCollection(list){
  * @returns {Boolean}
  */
 PieceCollection.prototype.isAvailableDest = function(dest){
-    return !this.list.reduce((result, piece) => {
-        return result || _.isEqual(dest, {
-            x: piece.x,
-            y: piece.y
-        });
-    }, false);
+    return !this.getAvailableList()
+        .reduce((result, piece) => {
+            return result || _.isEqual(dest, piece.loc);
+        }, false);
+};
+
+PieceCollection.prototype.getAvailableList = function(){
+    return this.list.filter((piece) => !!piece.loc);
 };
 
 //prepare
@@ -464,14 +546,16 @@ document.body.appendChild(table);
 var list = new PieceCollection([
     new Piece(TYPE_ENUM.KING, TURN_ENUM.WHITE, 1, 0),
     new Piece(TYPE_ENUM.QUEEN, TURN_ENUM.WHITE, 0, 0),
-    new Piece(TYPE_ENUM.ROCK, TURN_ENUM.WHITE, 0, 1),
+    new Piece(TYPE_ENUM.ROCK, TURN_ENUM.WHITE, 1, 1),
     new Piece(TYPE_ENUM.QUEEN, TURN_ENUM.BLACK, 5, 7),
     new Piece(TYPE_ENUM.KING, TURN_ENUM.BLACK, 7, 7),
-    new Piece(TYPE_ENUM.BISHOP, TURN_ENUM.WHITE, 5, 5)
+    new Piece(TYPE_ENUM.BISHOP, TURN_ENUM.WHITE, 5, 5),
+    new Piece(TYPE_ENUM.PAWN, TURN_ENUM.WHITE, 0, 1),
+    new Piece(TYPE_ENUM.PAWN, TURN_ENUM.BLACK, 0, 6)
 ]);
 
 
-var state = new State();
+var state = new State({});
 var presenter = new Presenter(table, list);
 presenter.render();
 
