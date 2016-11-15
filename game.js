@@ -201,57 +201,67 @@ function RuleValidator(state, list){
 
     this.mapMove = new Map([
         [TYPE_ENUM.KING, this.kingValidation],
-        [TYPE_ENUM.QUEEN, this.queenValidation]
+        [TYPE_ENUM.QUEEN, this.queenValidation],
+        [TYPE_ENUM.BISHOP, this.bishopValidation],
+        [TYPE_ENUM.ROCK, this.rockValidation]
     ]);
 
     this.mapAttack = new Map([
         [TYPE_ENUM.KING, () => true],
-        [TYPE_ENUM.QUEEN, () => true]
+        [TYPE_ENUM.QUEEN, () => true],
+        [TYPE_ENUM.BISHOP, () => true],
+        [TYPE_ENUM.ROCK, () => true]
     ]);
 }
 
+RuleValidator.prototype.getDeltaPath = function(prev, current){
+    return {
+        x: Math.abs(Math.abs(prev.x) - Math.abs(current.x)),
+        y: Math.abs(Math.abs(prev.y) - Math.abs(current.y))
+    };
+};
+
 RuleValidator.prototype.queenValidation = function(prev, current){
-    var dX = Math.abs(Math.abs(prev.x) - Math.abs(current.x));
-    var dY = Math.abs(Math.abs(prev.y) - Math.abs(current.y));
+    const delta = this.getDeltaPath(prev, current);
+
+    var result = false;
 
     switch(true){
         case prev.y === current.y:
-            for(let i= 1; i<dX-1; i++){
-                let point = {
-                    y: prev.y,
-                    x: current.x - i * (prev.x > current.x ? -1 : 1)
-                };
-                if(!this.list.isAvailableDest(point)){
-                    return false;
-                }
-            }
-
+            result = this.horizontalValidation(delta.x, current, (prev.x > current.x ? -1 : 1));
             break;
         case prev.x === current.x:
-            for(let i= 1; i<dY-1; i++){
-                let point = {
-                    x: prev.x,
-                    y: current.y - i * (prev.y > current.y ? -1 : 1)
-                };
-                if(!this.list.isAvailableDest(point)){
-                    return false;
-                }
-            }
-
+            result = this.verticalValidation(delta.y, current, (prev.y > current.y ? -1 : 1));
             break;
         default:
-            for(let i= 1; i<dX; i++){
-                let point = {
-                    x: current.x - i * (prev.x > current.x ? -1 : 1),
-                    y: current.y - i * (prev.y > current.y ? -1 : 1)
-                };
-                if(!this.list.isAvailableDest(point)){
-                    return false;
-                }
-            }
+            result = delta.x === delta.y && this.diagonalValidation(delta.x, current, (prev.x > current.x ? -1 : 1));
     }
 
-    return true;
+    return result;
+};
+
+RuleValidator.prototype.bishopValidation = function(prev, current){
+    const delta = this.getDeltaPath(prev, current);
+    const directionMod = (prev.x > current.x ? -1 : 1);
+
+    return delta.x === delta.y && this.diagonalValidation(delta.x, current, directionMod);
+};
+
+RuleValidator.prototype.rockValidation = function(prev, current){
+    const delta = this.getDeltaPath(prev, current);
+
+    var result = false;
+
+    switch(true){
+        case prev.y === current.y:
+            result = this.horizontalValidation(delta.x, current, (prev.x > current.x ? -1 : 1));
+            break;
+        case prev.x === current.x:
+            result = this.verticalValidation(delta.y, current, (prev.y > current.y ? -1 : 1));
+            break;
+    }
+
+    return result;
 };
 
 RuleValidator.prototype.kingValidation = function (prev, current){
@@ -259,6 +269,48 @@ RuleValidator.prototype.kingValidation = function (prev, current){
     var isValidY = Math.abs(Math.abs(prev.y) - Math.abs(current.y)) <2;
 
     return isValidX && isValidY;
+};
+
+RuleValidator.prototype.horizontalValidation = function(dX, current, mod){
+    for(let i= 1; i<dX-1; i++){
+        let point = {
+            y: current.y,
+            x: current.x - i * mod
+        };
+        if(!this.list.isAvailableDest(point)){
+            return false;
+        }
+    }
+
+    return true;
+};
+
+RuleValidator.prototype.verticalValidation = function(dY, current, mod){
+    for(let i= 1; i<dY-1; i++){
+        let point = {
+            x: current.x,
+            y: current.y - i * mod
+        };
+        if(!this.list.isAvailableDest(point)){
+            return false;
+        }
+    }
+
+    return true;
+};
+
+RuleValidator.prototype.diagonalValidation = function(delta, current, mod){
+    for(let i= 1; i<delta; i++){
+        let point = {
+            x: current.x - i * mod,
+            y: current.y - i * mod
+        };
+        if(!this.list.isAvailableDest(point)){
+            return false;
+        }
+    }
+
+    return true;
 };
 
 /**
@@ -412,10 +464,10 @@ document.body.appendChild(table);
 var list = new PieceCollection([
     new Piece(TYPE_ENUM.KING, TURN_ENUM.WHITE, 1, 0),
     new Piece(TYPE_ENUM.QUEEN, TURN_ENUM.WHITE, 0, 0),
-    //new Piece(TYPE_ENUM.ROCK, TURN_ENUM.WHITE, 0, 1),
+    new Piece(TYPE_ENUM.ROCK, TURN_ENUM.WHITE, 0, 1),
     new Piece(TYPE_ENUM.QUEEN, TURN_ENUM.BLACK, 5, 7),
     new Piece(TYPE_ENUM.KING, TURN_ENUM.BLACK, 7, 7),
-    new Piece(TYPE_ENUM.BISHOP, TURN_ENUM.BLACK, 5, 5)
+    new Piece(TYPE_ENUM.BISHOP, TURN_ENUM.WHITE, 5, 5)
 ]);
 
 
