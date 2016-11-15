@@ -241,14 +241,15 @@ function RuleValidator(state, list){
         [TYPE_ENUM.QUEEN, this.queenValidation],
         [TYPE_ENUM.BISHOP, this.bishopValidation],
         [TYPE_ENUM.ROCK, this.rockValidation],
-        [TYPE_ENUM.PAWN, this.pawnValidation]
+        [TYPE_ENUM.PAWN, this.pawnValidationMove]
     ]);
 
     this.mapAttack = new Map([
         [TYPE_ENUM.KING, () => true],
         [TYPE_ENUM.QUEEN, () => true],
         [TYPE_ENUM.BISHOP, () => true],
-        [TYPE_ENUM.ROCK, () => true]
+        [TYPE_ENUM.ROCK, () => true],
+        [TYPE_ENUM.PAWN, this.pawnValidationAttack]
     ]);
 }
 
@@ -333,7 +334,7 @@ RuleValidator.prototype.kingValidation = function (piece, current){
     return isValidX && isValidY;
 };
 
-RuleValidator.prototype.pawnValidation = function(piece, current){
+RuleValidator.prototype.pawnValidationMove = function(piece, current){
     const delta = this.getDeltaPath(piece.loc, current);
 
     const isSameX = piece.loc.x === current.x;
@@ -347,6 +348,19 @@ RuleValidator.prototype.pawnValidation = function(piece, current){
     }[piece.color]();
 
     return this.list.isAvailableDest(current) && isRightDirection && isSameX && isValidY;
+};
+
+RuleValidator.prototype.pawnValidationAttack = function(piece, current){
+    const delta = this.getDeltaPath(piece.loc, current);
+
+    const isInRange = delta.x === 1 && delta.y === 1;
+    const isDiagonal = delta.x === delta.y;
+    const isRightDirection = {
+        [TURN_ENUM.BLACK]: () => piece.loc.y > current.y,
+        [TURN_ENUM.WHITE]: () => piece.loc.y < current.y
+    }[piece.color]();
+
+    return isRightDirection && isDiagonal && isInRange;
 };
 
 RuleValidator.prototype.horizontalValidation = function(dX, current, mod){
@@ -467,27 +481,53 @@ function TurnManager(state, presenter, validator){
 
         if(wPiece){
             if(!cPiece){
-                if(this.validator.checkMove(wPiece, this.state.dest)){
-                    this.actions.move(wPiece);
-                    this.switchTurn();
-                    this.state.mark(wPiece);
-                }
+               this.runMovementStrategy(wPiece);
             } else {
-                if(this.validator.checkMove(wPiece, this.state.dest)){
-                    if(this.validator.canAttack(wPiece, this.state.dest)){
-                        if(cPiece.color !== wPiece.color){
-                            this.actions.kill(wPiece, cPiece);
-                            this.switchTurn();
-                            this.state.mark(wPiece);
-                        }
-                    }
-                }
+                this.runInteractionStrategy(cPiece, wPiece);
             }
         }
 
         this.presenter.render();
     });
 }
+
+TurnManager.prototype.runMovementStrategy = function(wPiece){
+    if(this.validator.checkMove(wPiece, this.state.dest)){
+        this.actions.move(wPiece);
+        this.switchTurn();
+        this.state.mark(wPiece);
+    }
+};
+
+TurnManager.prototype.runInteractionStrategy = function(cPiece, wPiece){
+    var map = {
+        [TYPE_ENUM.PAWN]: this.runPawnInteraction
+    };
+
+    return (map[wPiece.name] || this.runGeneralInteraction).call(this, cPiece, wPiece);
+};
+
+TurnManager.prototype.runPawnInteraction = function(cPiece, wPiece){
+    if(this.validator.canAttack(wPiece, this.state.dest)){
+        if(cPiece.color !== wPiece.color){
+            this.actions.kill(wPiece, cPiece);
+            this.switchTurn();
+            this.state.mark(wPiece);
+        }
+    }
+};
+
+TurnManager.prototype.runGeneralInteraction = function(cPiece, wPiece){
+    if(this.validator.checkMove(wPiece, this.state.dest)){
+        if(this.validator.canAttack(wPiece, this.state.dest)){
+            if(cPiece.color !== wPiece.color){
+                this.actions.kill(wPiece, cPiece);
+                this.switchTurn();
+                this.state.mark(wPiece);
+            }
+        }
+    }
+};
 
 TurnManager.prototype.switchTurn = function(){
     this.state.turn = this.ordering.next().value;
@@ -551,7 +591,8 @@ var list = new PieceCollection([
     new Piece(TYPE_ENUM.KING, TURN_ENUM.BLACK, 7, 7),
     new Piece(TYPE_ENUM.BISHOP, TURN_ENUM.WHITE, 5, 5),
     new Piece(TYPE_ENUM.PAWN, TURN_ENUM.WHITE, 0, 1),
-    new Piece(TYPE_ENUM.PAWN, TURN_ENUM.BLACK, 0, 6)
+    new Piece(TYPE_ENUM.PAWN, TURN_ENUM.BLACK, 0, 6),
+    new Piece(TYPE_ENUM.PAWN, TURN_ENUM.BLACK, 1, 4)
 ]);
 
 
