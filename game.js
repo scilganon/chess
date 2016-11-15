@@ -241,7 +241,8 @@ function RuleValidator(state, list){
         [TYPE_ENUM.QUEEN, this.queenValidation],
         [TYPE_ENUM.BISHOP, this.bishopValidation],
         [TYPE_ENUM.ROCK, this.rockValidation],
-        [TYPE_ENUM.PAWN, this.pawnValidationMove]
+        [TYPE_ENUM.PAWN, this.pawnValidationMove],
+        [TYPE_ENUM.KNIGHT, this.knightValidation]
     ]);
 
     this.mapAttack = new Map([
@@ -249,7 +250,8 @@ function RuleValidator(state, list){
         [TYPE_ENUM.QUEEN, () => true],
         [TYPE_ENUM.BISHOP, () => true],
         [TYPE_ENUM.ROCK, () => true],
-        [TYPE_ENUM.PAWN, this.pawnValidationAttack]
+        [TYPE_ENUM.PAWN, this.pawnValidationAttack],
+        [TYPE_ENUM.KNIGHT, () => true]
     ]);
 }
 
@@ -258,6 +260,17 @@ RuleValidator.prototype.getDeltaPath = function(prev, current){
         x: Math.abs(Math.abs(prev.x) - Math.abs(current.x)),
         y: Math.abs(Math.abs(prev.y) - Math.abs(current.y))
     };
+};
+
+/**
+ * @param {Piece} piece
+ * @param current
+ * @returns {boolean}
+ */
+RuleValidator.prototype.knightValidation = function(piece, current){
+    const delta = this.getDeltaPath(piece.loc, current);
+
+    return  _.isEqual([1,2], [delta.x, delta.y].sort());
 };
 
 /**
@@ -592,7 +605,8 @@ var list = new PieceCollection([
     new Piece(TYPE_ENUM.BISHOP, TURN_ENUM.WHITE, 5, 5),
     new Piece(TYPE_ENUM.PAWN, TURN_ENUM.WHITE, 0, 1),
     new Piece(TYPE_ENUM.PAWN, TURN_ENUM.BLACK, 0, 6),
-    new Piece(TYPE_ENUM.PAWN, TURN_ENUM.BLACK, 1, 4)
+    new Piece(TYPE_ENUM.PAWN, TURN_ENUM.BLACK, 1, 4),
+    new Piece(TYPE_ENUM.KNIGHT, TURN_ENUM.WHITE, 5, 6)
 ]);
 
 
