@@ -1,0 +1,16 @@
+{
+  "name": "online_chess",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.html",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "lodash": "^4.17.1",
+    "pubsub-js": "^1.5.4",
+    "webcomponents.js": "^0.7.23"
+  }
+}
