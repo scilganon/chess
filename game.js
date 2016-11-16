@@ -3,7 +3,11 @@
 const cfg = {
     theme: {
         ico_path: function(name, color){
-            return `./assets/Figurines/${_.capitalize(color)} ${_.capitalize(name[0])}.ico`;
+            var aliases  = {
+                [TYPE_ENUM.KNIGHT]: 'N'
+            };
+
+            return `./assets/Figurines/${_.capitalize(color)} ${_.capitalize(aliases[name] || name[0])}.ico`;
         }
     }
 };
@@ -119,20 +123,19 @@ function Presenter(table, list){
 }
 
 /**
- *
  * @param {PieceCollection} list
  */
 Presenter.prototype.initMap = function(list){
     this.map = new Map();
-    var aliases  = {
-        [TYPE_ENUM.KNIGHT]: 'N'
-    };
+    this.inversedMap = new Map();
+    this.list = list;
 
     list.forEach((p) => {
         let img = document.createElement('img');
-        img.src = cfg.theme.ico_path(aliases[p.name] || p.name, p.color);
+        img.src = cfg.theme.ico_path(p.name, p.color);
 
         this.map.set(img, p);
+        this.inversedMap.set(p, img);
     });
 };
 
@@ -174,6 +177,10 @@ Presenter.prototype.renderPiece = function(piece, img){
     }
 
     this.table.rows[piece.y].cells[piece.x].appendChild(img);
+};
+
+Presenter.prototype.renderChangedType = function(piece){
+    this.inversedMap.get(piece).src = cfg.theme.ico_path(piece.name, piece.color);
 };
 
 Presenter.prototype.render = function(){
@@ -449,6 +456,13 @@ RuleValidator.prototype.canBeCastled = function(piece, dest){
     return !this.state.wasUsed(target) && !this.state.wasUsed(target) && isFreeWay && sourceIsKing && destIsRock;
 };
 
+RuleValidator.prototype.canPawnBeReplaced = function(piece){
+    const isPawn = piece.name === TYPE_ENUM.PAWN;
+    const isBoundDest = piece.loc.y === (piece.color === TURN_ENUM.BLACK ? 0 : 7);
+
+    return isPawn && isBoundDest;
+};
+
 /**
  * @param {HTMLTableElement} table
  * @param {State} state
@@ -486,7 +500,7 @@ function TurnManager(state, presenter){
     this.presenter = presenter;
     this.ordering = TURN_ENUM();
 
-    this. validator = new RuleValidator(state, list);
+    this.validator = new RuleValidator(state, list);
     this.actions = new ActionManager(state);
 
     state.subscribe(() => {
@@ -505,46 +519,91 @@ function TurnManager(state, presenter){
         }
 
         if(wPiece){
-            if(!cPiece){
-               this.runMovementStrategy(wPiece);
-            } else {
-                this.runInteractionStrategy(cPiece, wPiece);
-            }
-        }
+            var promise;
 
-        this.presenter.render();
+            if(!cPiece){
+                promise = this.runMovementStrategy(wPiece);
+            } else {
+                promise = this.runInteractionStrategy(cPiece, wPiece);
+            }
+
+            promise
+                .then(() => {
+                    this.switchTurn();
+                })
+                .then(() => {
+                    this.presenter.render();
+                })
+                .then(() => {
+                    return this.pawnReplace(wPiece);
+                })
+                .then(() => {
+                    this.presenter.renderChangedType(wPiece);
+                });
+        }
     });
 }
 
-TurnManager.prototype.runMovementStrategy = function(wPiece){
-    if(this.validator.checkMove(wPiece, this.state.dest)){
-        this.actions.move(wPiece);
-        this.switchTurn();
-        this.state.mark(wPiece);
-    }
+TurnManager.prototype.pawnReplace = function(wPiece){
+    return new Promise((resolve, reject) => {
+        if(this.validator.canPawnBeReplaced(wPiece)){
+            this.actions
+                .replacePawnType(wPiece)
+                .then(() => resolve())
+                .catch(() => reject());
+        } else {
+            reject();
+        }
+    });
 };
 
+/**
+ * @param wPiece
+ * @returns {Promise}
+ */
+TurnManager.prototype.runMovementStrategy = function(wPiece){
+    return new Promise((resolve, reject) => {
+        if(this.validator.checkMove(wPiece, this.state.dest)){
+            this.actions.move(wPiece);
+            this.state.mark(wPiece);
+            resolve();
+        } else {
+            reject();
+        }
+    });
+};
+
+/**
+ * @param cPiece
+ * @param wPiece
+ * @returns {Promise}
+ */
 TurnManager.prototype.runInteractionStrategy = function(cPiece, wPiece){
-    var map = {
-        [TYPE_ENUM.PAWN]: this.runPawnInteraction
-    };
+    return new Promise((resolve, reject) => {
+        var map = {
+            [TYPE_ENUM.PAWN]: this.runPawnInteraction
+        };
 
-    if(cPiece.color !== wPiece.color){
-        return (map[wPiece.name] || this.runGeneralInteraction).call(this, cPiece, wPiece);
-    }
+        if(cPiece.color !== wPiece.color){
+            (map[wPiece.name] || this.runGeneralInteraction).call(this, cPiece, wPiece);
+            return resolve();
+        }
 
-    if(this.validator.canBeCastled(wPiece, this.state.dest)){
-        this.actions.castling(cPiece, wPiece);
-        this.switchTurn();
-        this.state.mark(wPiece);
-        this.state.mark(cPiece);
-    }
+        if(this.validator.canBeCastled(wPiece, this.state.dest)){
+            this.actions.castling(cPiece, wPiece);
+            this.state.mark(wPiece);
+            this.state.mark(cPiece);
+
+            return resolve();
+        }
+
+        reject();
+    });
 };
 
 TurnManager.prototype.runPawnInteraction = function(cPiece, wPiece){
     if(this.validator.canAttack(wPiece, this.state.dest)){
         this.actions.kill(wPiece, cPiece);
-        this.switchTurn();
         this.state.mark(wPiece);
     }
 };
@@ -565,6 +624,7 @@ TurnManager.prototype.switchTurn = function(){
 
 function ActionManager(state){
     this.state = state;
+    this.ctrl = new OutputController();
 }
 
 ActionManager.prototype.move = function(piece){
@@ -592,6 +652,19 @@ ActionManager.prototype.castling = function(rock, king){
     king.loc.x = king.loc.x - 2 * mod;
 };
 
+/**
+ * @param {Piece} pawn
+ * @return {Promise}
+ */
+ActionManager.prototype.replacePawnType = function(pawn){
+   return new Promise((resolve, reject) => {
+       this.ctrl.askTypeToSelect(pawn.color, (type) => {
+           pawn.name = type;
+           resolve(type);
+       });
+   });
+};
+
 function PieceCollection(list){
     this.list = list;
 
@@ -617,6 +690,63 @@ PieceCollection.prototype.findByDest = function(dest){
     return this.getAvailableList().find((piece) => _.isEqual(piece.loc, dest));
 };
 
+function OutputController(){
+}
+
+OutputController.prototype.askTypeToSelect = function(color, cb){
+    const variations = {
+        list: [
+            TYPE_ENUM.QUEEN,
+            TYPE_ENUM.ROCK,
+            TYPE_ENUM.KNIGHT,
+            TYPE_ENUM.BISHOP
+        ],
+        render(cb){
+            return this.list.map(cb).join('');
+        }
+    };
+
+    return vex.dialog.open({
+        message: "Choose you piece to replace current pawn",
+        input: `
+            <table>
+                <tr>
+                    ${variations.render((type, i) => {
+                        return `
+                            <td>
+                                <label for="${i}">
+                                    <img src="${cfg.theme.ico_path(type, color)}">
+                                </label>
+                            </td>
+                        `;
+                    })}
+                </tr>
+                <tr>
+                    ${variations.render((type, i) => {
+                        return `
+                            <td>
+                                <label for="${i}">
+                                    ${type}
+                                    <input id="${i}" type="radio" name="type" style="display: none;" value="${type}">
+                                </label>
+                            </td>
+                        `;
+                    })}
+                </tr>
+            </table>
+        `,
+        buttons: [
+            _.merge({}, vex.dialog.buttons.YES, { text: 'Apply' }),
+            _.merge({}, vex.dialog.buttons.NO, { text: 'Cancel' })
+        ],
+        callback: (data) => {
+            if(data){
+               cb(data.type);
+            }
+        }
+    });
+};
+
 //prepare
 var table = createTable({
     decorators: [
@@ -638,7 +768,10 @@ var list = new PieceCollection([
     new Piece(TYPE_ENUM.PAWN, TURN_ENUM.WHITE, 0, 1),
     new Piece(TYPE_ENUM.PAWN, TURN_ENUM.BLACK, 0, 6),
     new Piece(TYPE_ENUM.PAWN, TURN_ENUM.BLACK, 1, 4),
-    new Piece(TYPE_ENUM.KNIGHT, TURN_ENUM.WHITE, 5, 6)
+    new Piece(TYPE_ENUM.KNIGHT, TURN_ENUM.WHITE, 5, 6),
+    new Piece(TYPE_ENUM.PAWN, TURN_ENUM.WHITE, 3, 6),
+    new Piece(TYPE_ENUM.KNIGHT, TURN_ENUM.BLACK, 4, 7),
+    new Piece(TYPE_ENUM.PAWN, TURN_ENUM.BLACK, 6, 1),
 ]);
 
 
