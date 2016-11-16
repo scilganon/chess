@@ -436,6 +436,19 @@ RuleValidator.prototype.canAttack = function(piece, dest){
     return (this.mapAttack.get(piece.name) || _.noop).call(this, piece, dest);
 };
 
+RuleValidator.prototype.canBeCastled = function(piece, dest){
+    const target = this.list.findByDest(dest);
+
+    const sourceIsKing = piece.name === TYPE_ENUM.KING;
+    const destIsRock = target.name === TYPE_ENUM.ROCK;
+    const isFreeWay = this.rockValidation(target, {
+        y: dest.y,
+        x: dest.x-1
+    });
+
+    return !this.state.wasUsed(target) && !this.state.wasUsed(target) && isFreeWay && sourceIsKing && destIsRock;
+};
+
 /**
  * @param {HTMLTableElement} table
  * @param {State} state
@@ -466,15 +479,14 @@ InputController.prototype.handleCellClick =  function handleCellClick(event, cel
 /**
  * @param {State} state
  * @param {Presenter} presenter
- * @param {RuleValidator} validator
  * @constructor
  */
-function TurnManager(state, presenter, validator){
+function TurnManager(state, presenter){
     this.state = state;
     this.presenter = presenter;
-    this.validator = validator;
     this.ordering = TURN_ENUM();
 
+    this. validator = new RuleValidator(state, list);
     this.actions = new ActionManager(state);
 
     state.subscribe(() => {
@@ -517,27 +529,32 @@ TurnManager.prototype.runInteractionStrategy = function(cPiece, wPiece){
         [TYPE_ENUM.PAWN]: this.runPawnInteraction
     };
 
-    return (map[wPiece.name] || this.runGeneralInteraction).call(this, cPiece, wPiece);
+    if(cPiece.color !== wPiece.color){
+        return (map[wPiece.name] || this.runGeneralInteraction).call(this, cPiece, wPiece);
+    }
+
+    if(this.validator.canBeCastled(wPiece, this.state.dest)){
+        this.actions.castling(cPiece, wPiece);
+        this.switchTurn();
+        this.state.mark(wPiece);
+        this.state.mark(cPiece);
+    }
 };
 
 TurnManager.prototype.runPawnInteraction = function(cPiece, wPiece){
     if(this.validator.canAttack(wPiece, this.state.dest)){
-        if(cPiece.color !== wPiece.color){
-            this.actions.kill(wPiece, cPiece);
-            this.switchTurn();
-            this.state.mark(wPiece);
-        }
+        this.actions.kill(wPiece, cPiece);
+        this.switchTurn();
+        this.state.mark(wPiece);
     }
 };
 
 TurnManager.prototype.runGeneralInteraction = function(cPiece, wPiece){
     if(this.validator.checkMove(wPiece, this.state.dest)){
         if(this.validator.canAttack(wPiece, this.state.dest)){
-            if(cPiece.color !== wPiece.color){
-                this.actions.kill(wPiece, cPiece);
-                this.switchTurn();
-                this.state.mark(wPiece);
-            }
+            this.actions.kill(wPiece, cPiece);
+            this.switchTurn();
+            this.state.mark(wPiece);
         }
     }
 };
@@ -564,6 +581,17 @@ ActionManager.prototype.kill = function(killer, target){
     this.state.reset();
 };
 
+/**
+ * @param {Piece} rock
+ * @param {Piece} king
+ */
+ActionManager.prototype.castling = function(rock, king){
+    const mod = (rock.loc.x > king.loc.x) ? -1 : 1;
+
+    rock.loc.x = king.loc.x - 1 * mod;
+    king.loc.x = king.loc.x - 2 * mod;
+};
+
 function PieceCollection(list){
     this.list = list;
 
@@ -585,6 +613,10 @@ PieceCollection.prototype.getAvailableList = function(){
     return this.list.filter((piece) => !!piece.loc);
 };
 
+PieceCollection.prototype.findByDest = function(dest){
+    return this.getAvailableList().find((piece) => _.isEqual(piece.loc, dest));
+};
+
 //prepare
 var table = createTable({
     decorators: [
@@ -597,9 +629,9 @@ document.body.appendChild(table);
 
 //run
 var list = new PieceCollection([
-    new Piece(TYPE_ENUM.KING, TURN_ENUM.WHITE, 1, 0),
-    new Piece(TYPE_ENUM.QUEEN, TURN_ENUM.WHITE, 0, 0),
-    new Piece(TYPE_ENUM.ROCK, TURN_ENUM.WHITE, 1, 1),
+    new Piece(TYPE_ENUM.KING, TURN_ENUM.WHITE, 4, 0),
+    new Piece(TYPE_ENUM.ROCK, TURN_ENUM.WHITE, 0, 0),
+    new Piece(TYPE_ENUM.ROCK, TURN_ENUM.WHITE, 7, 0),
     new Piece(TYPE_ENUM.QUEEN, TURN_ENUM.BLACK, 5, 7),
     new Piece(TYPE_ENUM.KING, TURN_ENUM.BLACK, 7, 7),
     new Piece(TYPE_ENUM.BISHOP, TURN_ENUM.WHITE, 5, 5),
@@ -615,5 +647,4 @@ var presenter = new Presenter(table, list);
 presenter.render();
 
 var ctrl = new InputController(table, state);
-var validator = new RuleValidator(state, list);
-var manager = new TurnManager(state, presenter, validator);
+var manager = new TurnManager(state, presenter);
